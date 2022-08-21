@@ -78,16 +78,20 @@ class BoxAwareXCorr(BaseXCorr):
         :param kwargs:
         :return:
         """
+
+        template_feature_t = template_feature.transpose(1, 2).contiguous()
+
         dist_matrix = torch.cdist(template_bc, search_bc)  # B, M, N
-        template_xyz_feature_box = torch.cat([template_xyz.transpose(1, 2).contiguous(),
-                                              template_bc.transpose(1, 2).contiguous(),
-                                              template_feature], dim=1)
+        template_xyz_feature_box = torch.cat([template_xyz,
+                                              template_bc,
+                                              template_feature_t], dim=1)
         # search_xyz_feature = torch.cat([search_xyz.transpose(1, 2).contiguous(), search_feature], dim=1)
 
         top_k_nearest_idx_b = torch.argsort(dist_matrix, dim=1)[:, :self.k, :]  # B, K, N
         top_k_nearest_idx_b = top_k_nearest_idx_b.transpose(1, 2).contiguous().int()  # B, N, K
         correspondences_b = pointnet2_utils.grouping_operation(template_xyz_feature_box,
                                                                top_k_nearest_idx_b)  # B,3+9+D,N,K
+        correspondences_b = correspondences_b.permute(0, 3, 1, 2).contiguous()
         if self.use_search_bc:
             search_bc_expand = search_bc.transpose(1, 2).unsqueeze(dim=-1).repeat(1, 1, 1, self.K)  # B,9,N,K
             correspondences_b = torch.cat([search_bc_expand, correspondences_b], dim=1)

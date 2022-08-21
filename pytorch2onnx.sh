@@ -1,0 +1,1 @@
+python .\convert.py  --cfg cfgs/M2_track_kitti.yaml  --checkpoint .\pretrained_models\mmtrack_kitti_car.ckpt

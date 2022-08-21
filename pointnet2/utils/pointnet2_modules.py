@@ -56,9 +56,9 @@ class _PointnetSAModuleBase(nn.Module):
             sample_idxs = torch.arange(self.npoint).repeat(xyz.size(0), 1).int().cuda()
 
         new_xyz = (
-            pointnet2_utils.gather_operation(xyz_flipped, sample_idxs)
-                .transpose(1, 2)
-                .contiguous()
+            pointnet2_utils.gather_operation(xyz, sample_idxs)
+                # .transpose(1, 2)
+                # .contiguous()
         )
 
         for i in range(len(self.groupers)):
@@ -185,15 +185,11 @@ class PointnetFPModule(nn.Module):
             (B, mlp[-1], n) tensor of the features of the unknown features
         """
 
-        if known is not None:
-            dist, idx = pointnet2_utils.three_nn(unknown, known)
-            dist_recip = 1.0 / (dist + 1e-8)
-            norm = torch.sum(dist_recip, dim=2, keepdim=True)
-            weight = dist_recip / norm
+        known_feats_t = known_feats.transpose(1, 2).contiguous()
 
-            interpolated_feats = pointnet2_utils.three_interpolate(
-                known_feats, idx, weight
-            )
+        if known is not None:
+            interpolated_feats = pointnet2_utils.three_interpolate(unknown, known, known_feats_t)
+            interpolated_feats = interpolated_feats.transpose(1, 2).contiguous()
         else:
             interpolated_feats = known_feats.expand(
                 *(known_feats.size()[0:2] + [unknown.size(1)])
@@ -245,20 +241,21 @@ class FlowEmbedding(nn.Module):
         xyz1_t = xyz1.permute(0, 2, 1).contiguous()
         xyz2_t = xyz2.permute(0, 2, 1).contiguous()
         # feature1 = feature1.permute(0, 2, 1).contiguous()
-        # feature2 = feature2.permute(0, 2, 1).contiguous()
+        feature2_t = feature2.permute(0, 2, 1).contiguous()
 
         B, N, C = xyz1.shape
         if self.knn:
             idx = pointnet2_utils.knn_point(self.nsample, xyz1, xyz2)  # (B, npoint, nsample)
         else:
-            idx, cnt = pointnet2_utils.ball_query(self.radius, self.nsample, xyz2, xyz1)  # (B, npoint, nsample)
+            # instead ball_query
+            idx = pointnet2_utils.ball_query(xyz2, xyz1, self.radius, self.nsample)
 
-        xyz2_grouped = pointnet2_utils.grouping_operation(xyz2_t, idx)  # (B, 3, npoint, nsample)
-        pos_diff = xyz2_grouped - xyz1_t.view(B, -1, N, 1)  # (B, 3, npoint, nsample)
+        xyz2_grouped = pointnet2_utils.grouping_operation(xyz2, idx)  # (B, 3, npoint, nsample)
+        pos_diff = xyz2_grouped.permute(0, 3, 1, 2).contiguous() - xyz1_t.view(B, -1, N, 1)  # (B, 3, npoint, nsample)
 
-        feat2_grouped = pointnet2_utils.grouping_operation(feature2, idx)  # [B, C, npoint, nsample]
+        feat2_grouped = pointnet2_utils.grouping_operation(feature2_t, idx)  # [B, C, npoint, nsample]
         if self.corr_func == 'concat':
-            feat_diff = torch.cat([feat2_grouped, feature1.view(B, -1, N, 1).repeat(1, 1, 1, self.nsample)], dim=1)
+            feat_diff = torch.cat([feat2_grouped.permute(0, 3, 1, 2).contiguous(), feature1.view(B, -1, N, 1).repeat(1, 1, 1, self.nsample)], dim=1)
 
         feat1_new = torch.cat([pos_diff, feat_diff], dim=1)  # [B, 2*C+3,npoint, nsample]
         for i, conv in enumerate(self.mlp_convs):
@@ -308,18 +305,19 @@ class PointNetSetUpConv(nn.Module):
         xyz1_t = xyz1.permute(0, 2, 1).contiguous()
         xyz2_t = xyz2.permute(0, 2, 1).contiguous()
         # feature1 = feature1.permute(0, 2, 1).contiguous()
-        # feature2 = feature2.permute(0, 2, 1).contiguous()
+        feature2_t = feature2.permute(0, 2, 1).contiguous()
         B, C, N = xyz1_t.shape
         if self.knn:
             idx = pointnet2_utils.knn_point(self.nsample, xyz1, xyz2)  # (B, npoint1, nsample)
         else:
-            idx, cnt = pointnet2_utils.ball_query(self.radius, self.nsample, xyz2, xyz1)  # (B, npoint1, nsample)
+            # instead ball_query
+            idx = pointnet2_utils.ball_query(xyz2, xyz1, self.radius, self.nsample)
 
-        xyz2_grouped = pointnet2_utils.grouping_operation(xyz2_t, idx)
-        pos_diff = xyz2_grouped - xyz1_t.view(B, -1, N, 1)  # [B,3,N1,S]
+        xyz2_grouped = pointnet2_utils.grouping_operation(xyz2, idx)
+        pos_diff = xyz2_grouped.permute(0, 3, 1, 2).contiguous() - xyz1_t.view(B, -1, N, 1)  # [B,3,N1,S]
 
-        feat2_grouped = pointnet2_utils.grouping_operation(feature2, idx)
-        feat_new = torch.cat([feat2_grouped, pos_diff], dim=1)  # [B,C1+3,N1,S]
+        feat2_grouped = pointnet2_utils.grouping_operation(feature2_t, idx)
+        feat_new = torch.cat([feat2_grouped.permute(0, 3, 1, 2).contiguous(), pos_diff], dim=1)  # [B,C1+3,N1,S]
         for conv in self.mlp1_convs:
             feat_new = conv(feat_new)
         # max pooling

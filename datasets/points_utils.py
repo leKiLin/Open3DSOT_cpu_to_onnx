@@ -384,6 +384,7 @@ def rotz_batch_tensor(t):
     output[..., 1, 0] = s
     output[..., 1, 1] = c
     output[..., 2, 2] = 1
+    output = output.reshape(tuple(list(input_shape) + [3, 3]))
     return output
 
 
